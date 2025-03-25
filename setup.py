@@ -24,7 +24,6 @@ setup(
         'paddlepaddle',
         'paddleocr',
         'pathlib',
-        'flash-attn',
     ],
     include_packages_data=True,
     package_data={
