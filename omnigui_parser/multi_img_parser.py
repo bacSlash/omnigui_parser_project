@@ -34,8 +34,8 @@ def find_model_path(model_filename='best.pt', search_folder='weights/icon_detect
 
 # Initialize models
 ICON_DETECT_MODEL_PATH = find_model_path()
-ICON_CAPTION_MODEL_NAME = 'florence2'
-ICON_CAPTION_MODEL_PATH = 'microsoft/Florence-2-base'
+ICON_CAPTION_MODEL_NAME = 'blip2'
+ICON_CAPTION_MODEL_PATH = 'Salesforce/blip2-opt-2.7b'
 
 # Load YOLO model for icon detection
 yolo_model = get_yolo_model(ICON_DETECT_MODEL_PATH)
