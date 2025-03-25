@@ -19,4 +19,3 @@ setuptools
 Pillow
 huggingface_hub
 pathlib
-flash-attn
