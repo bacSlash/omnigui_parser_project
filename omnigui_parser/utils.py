@@ -138,7 +138,7 @@ def categorize_interactivity(element_type):
     else:
         return "Static"
 
-def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2-opt-2.7b", device=None):
+def get_caption_model_processor(model_name, model_name_or_path, device=None):
     if not device:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     if model_name == "blip2":
