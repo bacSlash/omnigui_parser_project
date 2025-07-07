@@ -1,6 +1,5 @@
 import os
 import csv
-from tkinter import filedialog, Tk
 import argparse
 from PIL import Image
 import torch
@@ -294,12 +293,6 @@ def process_image_original(image_path, previous_elements):
     
     return structured_data
 
-def select_folder():
-    root = Tk()
-    root.withdraw()
-    folder_path = filedialog.askdirectory(title="Select folder with images")
-    return folder_path
-
 def process_folder(folder_path, output_csv_path):
     headers = ["Image Name", 
                "Element ID", 
@@ -333,22 +326,18 @@ def process_folder(folder_path, output_csv_path):
                 except Exception as e:
                     print(f'Failed to process {filename}: {str(e)}')
                     
-def process_folder_cli():
+def main():
     parser = argparse.ArgumentParser(description='Process images from folder.')
     parser.add_argument('folder_path', type=str, help='Path to folder with images')
     parser.add_argument('output_csv_path', type=str, help='Path to save output CSV file')
     args = parser.parse_args()
     
+    if not os.path.exists(args.folder_path):
+        print(f"Error: Folder path '{args.folder_path}' does not exist.")
+        return
+    
     process_folder(args.folder_path, args.output_csv_path)
-                    
-def main():
-    folder_path = select_folder()
-    if folder_path:
-        output_csv_path = os.path.join(folder_path, 'parsed_output.csv')
-        process_folder(folder_path, output_csv_path)
-        print('All images processed. Results saved to', output_csv_path)
-    else:
-        print('No folder selected. Exiting.')
+    print('All images processed. Results saved to', args.output_csv_path)
 
 if __name__ == "__main__":
     main()
