@@ -118,6 +118,11 @@ def get_dominant_color(image, bbox):
     h, w, _ = image.shape
     x1, x2 = max(0, min(w-1, x1)), max(0, min(w-1, x2))
     y1, y2 = max(0, min(h-1, y1)), max(0, min(h-1, y2))
+    
+    if x1 >= x2 or y1 >= y2:
+        print(f"WARNING: Invalid bbox dimensions: {x1}, {y1}, {x2}, {y2}")
+        return (0, 0, 0)
+    
     cropped = image[y1:y2, x1:x2]
     if cropped.size == 0:
         return (0,0,0) # Black
@@ -144,7 +149,7 @@ def get_caption_model_processor(model_name, model_name_or_path, device=None):
     if model_name == "blip2":
         from transformers import Blip2Processor, Blip2ForConditionalGeneration
         processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-        if device == 'cpu':
+        if device == 'cpu': 
             model = Blip2ForConditionalGeneration.from_pretrained(
             model_name_or_path, device_map=None, torch_dtype=torch.float32
         ) 
@@ -649,6 +654,199 @@ def check_ocr_box(image_path, display_img = True, output_bb_format='xywh', goal_
             bb = [get_xyxy(item) for item in coord]
         # print('bounding box!!!', bb)
     return (text, bb), goal_filtering
+    
+    
+# Add these new functions to the END of your existing utils.py file
 
+def detect_interface_regions(image_path):
+    """
+    Detect CAD interface regions using generic heuristics
+    Returns dictionary with region names and bounding boxes
+    """
+    image = Image.open(image_path)
+    width, height = image.size
+    image_np = np.array(image)
+    
+    regions = {}
+    
+    # Convert to grayscale for analysis
+    gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+    
+    # 1. Detect potential viewport (largest rectangular area with content)
+    viewport_bbox = detect_viewport_region(gray, width, height)
+    if viewport_bbox:
+        regions['viewport'] = viewport_bbox
+    
+    # 2. Detect ribbon/toolbar area (top horizontal region with many small elements)
+    ribbon_bbox = detect_ribbon_region(gray, width, height)
+    if ribbon_bbox:
+        regions['ribbon'] = ribbon_bbox
+    
+    # 3. Detect side panels (vertical regions with text/controls)
+    left_panel, right_panel = detect_side_panels(gray, width, height, viewport_bbox)
+    if left_panel:
+        regions['left_panel'] = left_panel
+    if right_panel:
+        regions['right_panel'] = right_panel
+    
+    # 4. Detect status bar (bottom horizontal region)
+    status_bbox = detect_status_region(gray, width, height)
+    if status_bbox:
+        regions['status'] = status_bbox
+    
+    return regions
 
+def detect_viewport_region(gray_image, width, height):
+    """
+    Detect the main viewport/canvas area using edge detection and contour analysis
+    """
+    # Apply edge detection
+    edges = cv2.Canny(gray_image, 30, 100)
+    
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Look for large rectangular regions
+    min_area = (width * height) * 0.15  # At least 15% of screen
+    best_rect = None
+    best_area = 0
+    
+    for contour in contours:
+        # Approximate contour to polygon
+        epsilon = 0.02 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        
+        # Check if it's roughly rectangular (4-8 vertices)
+        if len(approx) >= 4 and len(approx) <= 8:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            
+            # Check aspect ratio (not too thin)
+            aspect_ratio = w / h
+            if 0.3 < aspect_ratio < 3.0 and area > min_area:
+                # Prefer central regions
+                center_x, center_y = x + w/2, y + h/2
+                distance_from_center = abs(center_x - width/2) + abs(center_y - height/2)
+                score = area - distance_from_center * 0.1
+                
+                if score > best_area:
+                    best_area = score
+                    best_rect = (x, y, x + w, y + h)
+    
+    # Fallback: assume center region is viewport
+    if best_rect is None:
+        margin_x, margin_y = int(width * 0.15), int(height * 0.15)
+        best_rect = (margin_x, margin_y, width - margin_x, height - margin_y)
+    
+    return best_rect
 
+def detect_ribbon_region(gray_image, width, height):
+    """
+    Detect toolbar/ribbon region (typically top horizontal area with many small elements)
+    """
+    # Check top 20% of screen
+    top_region_height = int(height * 0.2)
+    top_region = gray_image[:top_region_height, :]
+    
+    # Count edge density (toolbars have many small icons)
+    edges = cv2.Canny(top_region, 50, 150)
+    edge_density = np.sum(edges > 0) / (width * top_region_height)
+    
+    # If high edge density, likely a toolbar region
+    if edge_density > 0.02:  # Threshold for "busy" region
+        # Find the actual bounds by looking for horizontal lines
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        horizontal_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
+        
+        # Find top and bottom of ribbon
+        horizontal_sum = np.sum(horizontal_lines, axis=1)
+        non_zero_rows = np.where(horizontal_sum > width * 0.1)[0]
+        
+        if len(non_zero_rows) > 0:
+            top_y = max(0, non_zero_rows[0] - 10)
+            bottom_y = min(top_region_height, non_zero_rows[-1] + 30)
+            return (0, top_y, width, bottom_y)
+    
+    # Fallback: assume top 100 pixels
+    return (0, 0, width, min(100, height // 8))
+
+def detect_side_panels(gray_image, width, height, viewport_bbox):
+    """
+    Detect left and right panels (property panels, feature trees, etc.)
+    """
+    left_panel = None
+    right_panel = None
+    
+    if viewport_bbox:
+        vp_left, vp_top, vp_right, vp_bottom = viewport_bbox
+        
+        # Left panel: area to the left of viewport
+        if vp_left > 50:  # Significant left margin
+            left_region = gray_image[:, :vp_left]
+            if has_ui_content(left_region):
+                left_panel = (0, 0, vp_left, height)
+        
+        # Right panel: area to the right of viewport
+        if vp_right < width - 50:  # Significant right margin
+            right_region = gray_image[:, vp_right:]
+            if has_ui_content(right_region):
+                right_panel = (vp_right, 0, width, height)
+    
+    return left_panel, right_panel
+
+def detect_status_region(gray_image, width, height):
+    """
+    Detect status bar region (typically bottom horizontal area)
+    """
+    # Check bottom 10% of screen
+    bottom_region_height = int(height * 0.1)
+    bottom_start = height - bottom_region_height
+    bottom_region = gray_image[bottom_start:, :]
+    
+    # Look for horizontal lines or text patterns
+    edges = cv2.Canny(bottom_region, 50, 150)
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 1))
+    horizontal_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
+    
+    horizontal_sum = np.sum(horizontal_lines, axis=1)
+    if np.max(horizontal_sum) > width * 0.2:  # Has horizontal structure
+        return (0, bottom_start, width, height)
+    
+    # Fallback: bottom 30 pixels
+    return (0, height - 30, width, height)
+
+def has_ui_content(region):
+    """
+    Check if a region contains UI elements (text, icons, etc.)
+    """
+    if region.size == 0:
+        return False
+    
+    # Check for text-like patterns
+    edges = cv2.Canny(region, 50, 150)
+    edge_density = np.sum(edges > 0) / region.size
+    
+    # Check for vertical and horizontal structures
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 10))
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 1))
+    
+    vertical_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, vertical_kernel)
+    horizontal_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
+    
+    has_structure = (np.sum(vertical_lines) + np.sum(horizontal_lines)) > 0
+    
+    return edge_density > 0.01 and has_structure
+
+def get_region_importance(region_name):
+    """
+    Assign importance weights to different regions for HMM analysis
+    """
+    importance_weights = {
+        'ribbon': 3.0,        # Tool changes are most important
+        'left_panel': 2.0,    # Property panels, feature trees
+        'right_panel': 2.0,   # Property panels
+        'viewport': 1.0,      # Geometry changes (reduced weight to minimize noise)
+        'status': 1.5,        # Mode indicators, coordinates
+        'unknown': 1.0        # Fallback
+    }
+    return importance_weights.get(region_name, 1.0)
