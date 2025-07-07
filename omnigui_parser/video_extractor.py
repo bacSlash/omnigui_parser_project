@@ -1,20 +1,6 @@
 import cv2
 import os
-import tkinter as Tk
 import argparse
-from tkinter import filedialog
-
-def select_file():
-    root = Tk.Tk()
-    root.withdraw()
-    file_path = filedialog.askopenfilename(title='Select video file', filetypes=[('MP4 files', '*.mp4')])
-    return file_path
-
-def select_output_folder():
-    root = Tk.Tk()
-    root.withdraw()
-    folder_path = filedialog.askdirectory(title='Select output folder')
-    return folder_path
 
 def save_frames(video_path, output_folder):
     # Create output directory if not existing
@@ -53,15 +39,18 @@ def save_frames(video_path, output_folder):
     cap.release()
     cv2.destroyAllWindows()
     print("Completed extracting frames.")
-    
-# Use the GUI to select video file and output directory
+
 def main():
-    video_path = select_file()
-    output_directory = select_output_folder()
-    if video_path and output_directory:
-        save_frames(video_path, output_directory)
-    else:
-        print("Operation Cancelled.")
+    parser = argparse.ArgumentParser(description='Extract frames from video file.')
+    parser.add_argument('video_path', type=str, help='Path to the video file')
+    parser.add_argument('output_folder', type=str, help='Path to output folder for frames')
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.video_path):
+        print(f"Error: Video file '{args.video_path}' does not exist.")
+        return
+    
+    save_frames(args.video_path, args.output_folder)
 
 if __name__ == "__main__":
     main()
